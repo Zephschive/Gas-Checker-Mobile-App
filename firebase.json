@@ -1,0 +1,28 @@
+{
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "gasleakagemonitor-314f5",
+          "appId": "1:955828888955:android:aa203bb2121759d34249de",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "gasleakagemonitor-314f5",
+          "configurations": {
+            "android": "1:955828888955:android:aa203bb2121759d34249de",
+            "ios": "1:955828888955:ios:4bbc14ddb754ddc44249de",
+            "macos": "1:955828888955:ios:4bbc14ddb754ddc44249de",
+            "web": "1:955828888955:web:9351bff6b36336f04249de",
+            "windows": "1:955828888955:web:abe761ca491808cd4249de"
+          }
+        }
+      }
+    }
+  }
+}
