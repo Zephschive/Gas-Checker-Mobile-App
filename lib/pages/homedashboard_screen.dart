@@ -120,7 +120,7 @@ class _HomeDashboardState extends State<HomeDashboard> with SingleTickerProvider
                 // Show system notification
                 NotificationService().showGasLeakAlert(
                   title: '🚨 GAS LEAK ALERT!',
-                  body: 'Dangerous gas levels detected in your home!',
+                  body: 'Dangerous gas levels detected! Open app immediately.',
                   id: 1,
                 );
 

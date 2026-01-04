@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../theme_provider.dart';
 
 class SettingsAlerts extends StatefulWidget {
@@ -13,6 +14,28 @@ class _SettingsAlertsState extends State<SettingsAlerts> {
   bool _inAppNotifications = true;
   bool _loudSoundAlarm = true;
   bool _pushNotifications = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _inAppNotifications = prefs.getBool('in_app_notifications_enabled') ?? true;
+      _loudSoundAlarm = prefs.getBool('loud_sound_alarm_enabled') ?? true;
+      _pushNotifications = prefs.getBool('notifications_enabled') ?? true;
+    });
+  }
+
+  Future<void> _saveSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('in_app_notifications_enabled', _inAppNotifications);
+    await prefs.setBool('loud_sound_alarm_enabled', _loudSoundAlarm);
+    await prefs.setBool('notifications_enabled', _pushNotifications);
+  }
 
   @override
   Widget build(BuildContext context) {

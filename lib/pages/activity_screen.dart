@@ -107,8 +107,9 @@ class _ActivityLogState extends State<ActivityLog> {
           }
         });
 
-        // Sort entries by date (newest first)
+        // Sort entries by date and time (newest first)
         allEntries.sort((a, b) => b.dateTime.compareTo(a.dateTime));
+        print('📋 Sorted ${allEntries.length} entries by date (newest first)');
 
         // Group entries by date
         final now = DateTime.now();
@@ -129,6 +130,11 @@ class _ActivityLogState extends State<ActivityLog> {
             olderEntries.add(entry);
           }
         }
+
+        // Sort each date group by time (newest first within each day)
+        todayEntries.sort((a, b) => b.dateTime.compareTo(a.dateTime));
+        yesterdayEntries.sort((a, b) => b.dateTime.compareTo(a.dateTime));
+        olderEntries.sort((a, b) => b.dateTime.compareTo(a.dateTime));
 
         setState(() {
           _todayEntries = todayEntries;

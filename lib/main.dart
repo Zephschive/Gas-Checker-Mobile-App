@@ -5,6 +5,7 @@ import 'firebase_options.dart';
 import 'package:provider/provider.dart';
 import 'theme_provider.dart';
 import 'notification_service.dart';
+import 'background_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -16,6 +17,9 @@ void main() async {
 
   // Initialize notifications
   await NotificationService().initialize();
+
+  // Initialize background service
+  await BackgroundGasMonitor.initialize();
 
   runApp(
     ChangeNotifierProvider(

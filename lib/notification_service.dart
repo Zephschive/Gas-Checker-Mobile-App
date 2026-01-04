@@ -12,6 +12,23 @@ class NotificationService {
       FlutterLocalNotificationsPlugin();
 
   Future<void> initialize() async {
+    // Create notification channel for background service
+    const AndroidNotificationChannel channel = AndroidNotificationChannel(
+      'gas_monitor_channel',
+      'Gas Monitor Service',
+      description: 'Background gas monitoring notifications',
+      importance: Importance.low,
+      enableVibration: false,
+      playSound: false,
+      showBadge: false,
+    );
+
+    // Create the channel
+    await _flutterLocalNotificationsPlugin
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(channel);
+
     // Android initialization settings
     const AndroidInitializationSettings androidInitializationSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
