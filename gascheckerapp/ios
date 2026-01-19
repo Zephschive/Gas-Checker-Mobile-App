@@ -1,0 +1,1 @@
+The `ios` directory is typically managed by Xcode and contains platform-specific files for the iOS version of your Flutter app. It is not meant to be manually edited for the purpose of adding Firebase integration. Therefore, this directory is intentionally left blank.

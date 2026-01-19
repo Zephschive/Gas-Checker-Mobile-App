@@ -1,0 +1,9 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow read access to GasHistory collection for all users
+    match /GasHistory/{document=**} {
+      allow read: if true;
+    }
+  }
+}
