@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'dart:async';
 import 'pagesExt.dart';
 
 class MainScreen extends StatefulWidget {
@@ -10,13 +12,133 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
+  double _lpgLevel = 75.0;
+  bool _isConnected = false;
+  bool _isConnecting = false;
+  String _safetyStatus = 'All Safe';
+  StreamSubscription<DatabaseEvent>? _gasLevelSubscription;
 
-  final List<Widget> _pages = [
-    const HomeDashboard(),
+  @override
+  void initState() {
+    super.initState();
+    // Start Firebase connection automatically
+    _connectToDevice();
+  }
+
+  List<Widget> get _pages => [
+    HomeDashboard(
+      lpgLevel: _lpgLevel,
+      isConnected: _isConnected,
+      isConnecting: _isConnecting,
+      safetyStatus: _safetyStatus,
+    ),
     const ActivityLog(),
     const SettingsAlerts(),
- 
   ];
+
+  @override
+  void dispose() {
+    _gasLevelSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _connectToDevice() {
+    if (_gasLevelSubscription != null || _isConnecting) return; // Already connecting or connected
+
+    print('🔌 Starting connection to device...');
+    setState(() {
+      _isConnecting = true;
+    });
+
+    final databaseRef = FirebaseDatabase.instance.ref('GasHistory');
+
+    _gasLevelSubscription = databaseRef.onValue.listen((event) {
+      final data = event.snapshot.value;
+      print('📡 Received data from Firebase: $data');
+
+      if (data != null && data is Map) {
+        // Get the latest entry (assuming the last key is the most recent)
+        final entries = data.entries.toList();
+        print('📊 Found ${entries.length} entries in GasHistory');
+
+        if (entries.isNotEmpty) {
+          // Sort by key (Firebase keys are chronological) and take the last one
+          entries.sort((a, b) => a.key.compareTo(b.key));
+          final latestKey = entries.last.key;
+          final latestEntry = entries.last.value;
+
+          print('🆕 Latest entry key: $latestKey');
+          print('📋 Latest entry data: $latestEntry');
+
+          if (latestEntry is Map) {
+            final gas1Level = latestEntry['Gas1'];
+            final gas2Level = latestEntry['Gas2'];
+            final statusField = latestEntry['Status']; // Read Status field directly from Firebase
+            print('⛽ Gas1 level: $gas1Level, Gas2 level: $gas2Level, Status: $statusField');
+
+            if (gas2Level is num) {
+              // Calculate percentage based on gas2 value (2750 = 100%, 0 = 0%)
+              final gas2Value = gas2Level.toDouble();
+              final rawPercentage = gas2Value / 2750.0;
+              final clampedPercentage = rawPercentage.clamp(0.0, 1.0);
+              final percentage = clampedPercentage * 100.0;
+
+              print('📊 Percentage calculation: Gas2($gas2Value) / 2750 = ${rawPercentage.toStringAsFixed(3)} → ${percentage.toStringAsFixed(2)}%');
+
+              // Use Status field directly from Firebase instead of calculating
+              final safetyStatus = statusField?.toString() ?? 'Unknown';
+
+              setState(() {
+                _lpgLevel = percentage;
+                _safetyStatus = safetyStatus;
+                _isConnected = true;
+                _isConnecting = false; // Stop loading
+              });
+              print('✅ Connected successfully! Gas1: $gas1Level, Gas2: $gas2Value, LPG Level: ${percentage.toStringAsFixed(1)}%, Firebase Status: $safetyStatus');
+            } else {
+              print('⚠️ Gas2 field is not a number: $gas2Level');
+              // If data exists but no valid Gas2 field, still consider connected
+              setState(() {
+                _isConnected = true;
+                _isConnecting = false;
+              });
+            }
+          } else {
+            print('⚠️ Latest entry is not a map: $latestEntry');
+            // If latest entry is not a map, still consider connected
+            setState(() {
+              _isConnected = true;
+              _isConnecting = false;
+            });
+          }
+        } else {
+          print('⚠️ No entries found in GasHistory');
+        }
+      } else {
+        print('⚠️ No data received or data is not a map');
+        // If no data, wait a bit more
+        Future.delayed(const Duration(seconds: 3), () {
+          if (mounted && _isConnecting) {
+            print('⏰ Timeout: No data received after 3 seconds');
+            setState(() {
+              _isConnecting = false;
+            });
+            // Optionally cancel subscription if no data after timeout
+            _gasLevelSubscription?.cancel();
+            _gasLevelSubscription = null;
+          }
+        });
+      }
+    }, onError: (error) {
+      print('❌ Firebase error: $error');
+      // Handle errors
+      setState(() {
+        _isConnecting = false;
+      });
+      _gasLevelSubscription?.cancel();
+      _gasLevelSubscription = null;
+    });
+  }
 
   void _onItemTapped(int index) {
     setState(() {
@@ -88,5 +210,3 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 }
-
- 

@@ -29,24 +29,24 @@ class ActivityLogEntry {
 
   static ActivityLogEntry? fromMap(String key, Map<dynamic, dynamic> data) {
     final rawDateTime = data['DateTime'];
-    print('🕒 Raw DateTime for key $key: $rawDateTime (type: ${rawDateTime.runtimeType})');
+   
 
     if (rawDateTime is! String || rawDateTime.trim().isEmpty) {
-      print('⏭️ Skipping entry $key: DateTime is not a valid string');
+    
       return null;
     }
 
     final dateTimeString = rawDateTime.trim();
-    print('🕒 Trimmed DateTime string: "$dateTimeString"');
+    
 
     DateTime parsedDateTime;
     try {
       // Convert "yyyy-MM-dd HH:mm:ss" to ISO format by replacing space with 'T'
       final isoString = dateTimeString.replaceFirst(' ', 'T');
       parsedDateTime = DateTime.parse(isoString);
-      print('✅ Successfully parsed DateTime: $parsedDateTime');
+   
     } catch (e) {
-      print('❌ Error parsing DateTime string "$dateTimeString": $e, skipping entry');
+   
       return null;
     }
 
@@ -63,6 +63,7 @@ class ActivityLogEntry {
 class _ActivityLogState extends State<ActivityLog> {
   String _selectedFilter = 'All';
   bool _isLoading = true;
+  bool _dataReceived = false;
   List<ActivityLogEntry> _todayEntries = [];
   List<ActivityLogEntry> _yesterdayEntries = [];
   List<ActivityLogEntry> _olderEntries = [];
@@ -81,17 +82,16 @@ class _ActivityLogState extends State<ActivityLog> {
   }
 
   void _loadActivityData() {
-    print('📊 Loading activity data from Firebase...');
     setState(() {
       _isLoading = true;
+      _dataReceived = false;
     });
 
     final databaseRef = FirebaseDatabase.instance.ref('GasHistory');
 
-    // Set a timeout to stop loading after 10 seconds if no data
-    Timer(const Duration(seconds: 10), () {
-      if (mounted && _isLoading) {
-        print('⏰ Loading timeout: No data received after 10 seconds');
+    // Set minimum 5-second loading delay
+    Timer(const Duration(seconds: 5), () {
+      if (mounted && _dataReceived && _isLoading) {
         setState(() {
           _isLoading = false;
         });
@@ -100,7 +100,6 @@ class _ActivityLogState extends State<ActivityLog> {
 
     _activitySubscription = databaseRef.onValue.listen((event) {
       final data = event.snapshot.value;
-      print('📡 Received activity data: $data');
 
       if (data != null && data is Map) {
         final allEntries = <ActivityLogEntry>[];
@@ -114,14 +113,13 @@ class _ActivityLogState extends State<ActivityLog> {
                 allEntries.add(entry);
               }
             } catch (e) {
-              print('❌ Error parsing entry $key: $e');
+
             }
           }
         });
 
         // Sort entries by date and time (newest first)
         allEntries.sort((a, b) => b.dateTime.compareTo(a.dateTime));
-        print('📋 Sorted ${allEntries.length} entries by date (newest first)');
 
         // Group entries by date
         final now = DateTime.now();
@@ -148,24 +146,25 @@ class _ActivityLogState extends State<ActivityLog> {
         yesterdayEntries.sort((a, b) => b.dateTime.compareTo(a.dateTime));
         olderEntries.sort((a, b) => b.dateTime.compareTo(a.dateTime));
 
+        // Mark data as received and update data
         setState(() {
           _todayEntries = todayEntries;
           _yesterdayEntries = yesterdayEntries;
           _olderEntries = olderEntries;
-          _isLoading = false;
+          _dataReceived = true;
         });
 
-        print('✅ Loaded ${_todayEntries.length} today, ${_yesterdayEntries.length} yesterday, ${_olderEntries.length} older entries');
+        // The timer will handle stopping the loading after the minimum delay
+
       } else {
-        print('⚠️ No activity data received');
         // Keep loading state until we get some data
         // Don't set _isLoading = false here
       }
     }, onError: (error) {
-      print('❌ Firebase activity error: $error');
-      // On error, stop loading but show error state
+      // On error, stop loading immediately and show error state
       setState(() {
         _isLoading = false;
+        _dataReceived = true;
       });
     });
   }
@@ -460,13 +459,13 @@ class _ActivityLogState extends State<ActivityLog> {
   }
 
   List<ActivityLogEntry> _filterEntries(List<ActivityLogEntry> entries) {
-    print('🔍 Filtering ${entries.length} entries with filter: $_selectedFilter');
+
 
     List<ActivityLogEntry> filtered;
 
     if (_selectedFilter == 'All') {
       filtered = entries;
-      print('✅ All filter: returning all ${filtered.length} entries');
+
     } else if (_selectedFilter == 'Alerts') {
       filtered = entries.where((entry) {
         final status = entry.status.toUpperCase();
@@ -474,7 +473,7 @@ class _ActivityLogState extends State<ActivityLog> {
         if (isAlert) print('🚨 Alert found: ${entry.key} with status ${entry.status}');
         return isAlert;
       }).toList();
-      print('✅ Alerts filter: returning ${filtered.length} alert entries');
+
     } else if (_selectedFilter == 'Readings') {
       filtered = entries.where((entry) {
         final status = entry.status.toUpperCase();
@@ -482,7 +481,7 @@ class _ActivityLogState extends State<ActivityLog> {
         if (isReading) print('📊 Reading found: ${entry.key} with status ${entry.status}');
         return isReading;
       }).toList();
-      print('✅ Readings filter: returning ${filtered.length} reading entries');
+
     } else {
       filtered = entries;
     }
@@ -524,7 +523,6 @@ class _ActivityLogState extends State<ActivityLog> {
     }
 
     final timeString = DateFormat('h:mm a').format(entry.dateTime);
-    print('⏰ Displaying time for entry ${entry.key}: $timeString (from ${entry.dateTime})');
 
     return _buildActivityCard(
       icon: icon,
