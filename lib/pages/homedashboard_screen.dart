@@ -1,11 +1,8 @@
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
-import 'package:firebase_database/firebase_database.dart';
 import 'dart:async';
 import 'package:provider/provider.dart';
 import '../theme_provider.dart';
-import 'AlertScreen.dart';
-import '../notification_service.dart';
 
 class HomeDashboard extends StatefulWidget {
   final double lpgLevel;
@@ -50,38 +47,6 @@ class _HomeDashboardState extends State<HomeDashboard> with SingleTickerProvider
     super.didUpdateWidget(oldWidget);
     if (oldWidget.lpgLevel != widget.lpgLevel) {
       _updateAnimation();
-
-      // Check for dangerous conditions when LPG level changes
-      _checkForDangerousConditions();
-    }
-  }
-
-  void _checkForDangerousConditions() {
-    final isDangerous = widget.lpgLevel >= 100.0 || widget.safetyStatus.toUpperCase() == 'LEAKAGE';
-
-    if (isDangerous && mounted) {
-      // Show in-app notification
-      NotificationService().showInAppAlert(
-        context,
-        title: 'GAS LEAK DETECTED!',
-        message: 'Dangerous gas levels detected. Take immediate action!',
-      );
-
-      // Show system notification
-      NotificationService().showGasLeakAlert(
-        title: '🚨 GAS LEAK ALERT!',
-        body: 'Dangerous gas levels detected! Open app immediately.',
-        id: 1,
-      );
-
-      // Navigate to AlertScreen if LPG level reaches 100%
-      if (widget.lpgLevel >= 100.0) {
-        print('🚨 LPG Level reached 100%! Navigating to EmergencyAlert...');
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (context) => const EmergencyAlert()),
-        );
-      }
     }
   }
 
@@ -104,6 +69,7 @@ class _HomeDashboardState extends State<HomeDashboard> with SingleTickerProvider
       backgroundColor: themeProvider.secondaryCardColor,
       appBar: AppBar(
         backgroundColor: themeProvider.secondaryCardColor,
+        automaticallyImplyLeading: false,
         elevation: 0,
         title: Text(
           'Home Status',

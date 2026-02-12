@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'dart:async';
 import 'pagesExt.dart';
+import '../notification_service.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -17,6 +18,8 @@ class _MainScreenState extends State<MainScreen> {
   bool _isConnecting = false;
   String _safetyStatus = 'All Safe';
   StreamSubscription<DatabaseEvent>? _gasLevelSubscription;
+  double _previousLpgLevel = 75.0;
+  String _previousSafetyStatus = 'All Safe';
 
   @override
   void initState() {
@@ -89,12 +92,17 @@ class _MainScreenState extends State<MainScreen> {
               final safetyStatus = statusField?.toString() ?? 'Unknown';
 
               setState(() {
+                _previousLpgLevel = _lpgLevel;
+                _previousSafetyStatus = _safetyStatus;
                 _lpgLevel = percentage;
                 _safetyStatus = safetyStatus;
                 _isConnected = true;
                 _isConnecting = false; // Stop loading
               });
               print('✅ Connected successfully! Gas1: $gas1Level, Gas2: $gas2Value, LPG Level: ${percentage.toStringAsFixed(1)}%, Firebase Status: $safetyStatus');
+              
+              // Check for dangerous conditions when data changes
+              _checkForDangerousConditions();
             } else {
               print('⚠️ Gas2 field is not a number: $gas2Level');
               // If data exists but no valid Gas2 field, still consider connected
@@ -140,10 +148,39 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
-  void _onItemTapped(int index) {
-    setState(() {
-      _selectedIndex = index;
-    });
+  void _checkForDangerousConditions() {
+    final isDangerous = _lpgLevel >= 100.0 || _safetyStatus.toUpperCase() == 'LEAKAGE';
+    final wasDangerous = _previousLpgLevel >= 100.0 || _previousSafetyStatus.toUpperCase() == 'LEAKAGE';
+    
+    // Only trigger if it just became dangerous (not if it was already dangerous)
+    if (isDangerous && !wasDangerous && mounted) {
+      // Show in-app notification
+      NotificationService().showInAppAlert(
+        context,
+        title: 'GAS LEAK DETECTED!',
+        message: 'Dangerous gas levels detected. Take immediate action!',
+      );
+
+      // Show system notification
+      NotificationService().showGasLeakAlert(
+        title: '🚨 GAS LEAK ALERT!',
+        body: 'Dangerous gas levels detected! Open app immediately.',
+        id: 1,
+      );
+
+      // Navigate to AlertScreen if LPG level reaches 100% or status is LEAKAGE
+      if (_lpgLevel >= 100.0 || _safetyStatus.toUpperCase() == 'LEAKAGE') {
+        print('🚨 Dangerous condition detected! LPG Level: ${_lpgLevel}%, Status: $_safetyStatus. Navigating to EmergencyAlert...');
+        Future.delayed(const Duration(milliseconds: 100), () {
+          if (mounted) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const EmergencyAlert()),
+            );
+          }
+        });
+      }
+    }
   }
 
   @override

@@ -69,6 +69,26 @@ class _EmergencyAlertState extends State<EmergencyAlert> {
     }
   }
 
+  Future<void> _stopAlarmSoundWithoutState() async {
+    try {
+      await _audioPlayer.stop();
+      print('🔇 Alarm sound stopped');
+    } catch (e) {
+      print('❌ Error stopping alarm sound: $e');
+    }
+  }
+
+  void _navigateToHome() {
+    // Use addPostFrameCallback to ensure navigation happens after the frame is complete
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (context) => const MainScreen()),
+        );
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -76,6 +96,13 @@ class _EmergencyAlertState extends State<EmergencyAlert> {
       appBar: AppBar(
         backgroundColor: const Color(0xFF1A1A1A),
         elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white, size: 28),
+          onPressed: () async {
+            await _stopAlarmSoundWithoutState();
+            _navigateToHome();
+          },
+        ),
         title: const Text(
           'EMERGENCY',
           style: TextStyle(
@@ -216,69 +243,6 @@ class _EmergencyAlertState extends State<EmergencyAlert> {
                     ],
                   ),
                 ),
-              ),
-
-              const SizedBox(height: 16),
-
-              // Navigation buttons row
-              Row(
-                children: [
-                  // Back to Dashboard button
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () async {
-                        await _stopAlarmSound();
-                        if (mounted) {
-                          // Navigate to main navigation page, clearing the stack
-                          Navigator.of(context).pushAndRemoveUntil(
-                            MaterialPageRoute(builder: (context) => const MainScreen()),
-                            (Route<dynamic> route) => false,
-                          );
-                        }
-                      },
-                      icon: const Icon(Icons.home, size: 20),
-                      label: const Text('Dashboard'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF4A9B8E),
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(width: 12),
-
-                  // Dismiss button
-                  Expanded(
-                    child: TextButton(
-                      onPressed: () async {
-                        await _stopAlarmSound();
-                        if (mounted) {
-                          Navigator.of(context).pop();
-                        }
-                      },
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          side: const BorderSide(color: Colors.white30, width: 1),
-                        ),
-                      ),
-                      child: const Text(
-                        'Dismiss Alert',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
               ),
 
               const SizedBox(height: 20),
