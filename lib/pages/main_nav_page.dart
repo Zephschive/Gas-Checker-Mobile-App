@@ -1,8 +1,10 @@
-import 'package:flutter/material.dart';
-import 'package:firebase_database/firebase_database.dart';
 import 'dart:async';
-import 'pagesExt.dart';
+
+import 'package:firebase_database/firebase_database.dart';
+import 'package:flutter/material.dart';
 import '../notification_service.dart';
+import 'AlertScreen.dart';
+import 'pagesExt.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -67,10 +69,9 @@ class _MainScreenState extends State<MainScreen> {
         if (entries.isNotEmpty) {
           // Sort by key (Firebase keys are chronological) and take the last one
           entries.sort((a, b) => a.key.compareTo(b.key));
-          final latestKey = entries.last.key;
           final latestEntry = entries.last.value;
 
-          print('🆕 Latest entry key: $latestKey');
+          print('🆕 Latest entry key: ${entries.last.key}');
           print('📋 Latest entry data: $latestEntry');
 
           if (latestEntry is Map) {
@@ -91,6 +92,12 @@ class _MainScreenState extends State<MainScreen> {
               // Use Status field directly from Firebase instead of calculating
               final safetyStatus = statusField?.toString() ?? 'Unknown';
 
+              final notEmergency = percentage < 100.0 &&
+                  safetyStatus.toUpperCase() != 'LEAKAGE';
+              if (notEmergency) {
+                unawaited(NotificationService().resetGasAlertSoundCooldown());
+              }
+
               setState(() {
                 _previousLpgLevel = _lpgLevel;
                 _previousSafetyStatus = _safetyStatus;
@@ -101,7 +108,6 @@ class _MainScreenState extends State<MainScreen> {
               });
               print('✅ Connected successfully! Gas1: $gas1Level, Gas2: $gas2Value, LPG Level: ${percentage.toStringAsFixed(1)}%, Firebase Status: $safetyStatus');
               
-              // Check for dangerous conditions when data changes
               _checkForDangerousConditions();
             } else {
               print('⚠️ Gas2 field is not a number: $gas2Level');
@@ -149,38 +155,36 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _checkForDangerousConditions() {
-    final isDangerous = _lpgLevel >= 100.0 || _safetyStatus.toUpperCase() == 'LEAKAGE';
-    final wasDangerous = _previousLpgLevel >= 100.0 || _previousSafetyStatus.toUpperCase() == 'LEAKAGE';
-    
-    // Only trigger if it just became dangerous (not if it was already dangerous)
-    if (isDangerous && !wasDangerous && mounted) {
-      // Show in-app notification
-      NotificationService().showInAppAlert(
-        context,
-        title: 'GAS LEAK DETECTED!',
-        message: 'Dangerous gas levels detected. Take immediate action!',
-      );
+    final isDangerous =
+        _lpgLevel >= 100.0 || _safetyStatus.toUpperCase() == 'LEAKAGE';
+    final wasDangerous = _previousLpgLevel >= 100.0 ||
+        _previousSafetyStatus.toUpperCase() == 'LEAKAGE';
 
-      // Show system notification
-      NotificationService().showGasLeakAlert(
-        title: '🚨 GAS LEAK ALERT!',
-        body: 'Dangerous gas levels detected! Open app immediately.',
-        id: 1,
-      );
+    if (!isDangerous || wasDangerous || !mounted) return;
+    if (EmergencyAlert.isRouteActive) return;
 
-      // Navigate to AlertScreen if LPG level reaches 100% or status is LEAKAGE
-      if (_lpgLevel >= 100.0 || _safetyStatus.toUpperCase() == 'LEAKAGE') {
-        print('🚨 Dangerous condition detected! LPG Level: ${_lpgLevel}%, Status: $_safetyStatus. Navigating to EmergencyAlert...');
-        Future.delayed(const Duration(milliseconds: 100), () {
-          if (mounted) {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const EmergencyAlert()),
-            );
-          }
-        });
+    NotificationService().showGasLeakAlert(
+      title: '🚨 GAS LEAK ALERT!',
+      body: 'Dangerous gas levels detected! Open app immediately.',
+      id: 1,
+      playSound: false,
+    );
+
+    NotificationService().showInAppAlert(
+      context,
+      title: 'GAS LEAK DETECTED!',
+      message: 'Dangerous gas levels detected. Take immediate action!',
+    );
+
+    print('🚨 Dangerous condition detected! LPG Level: ${_lpgLevel}%, Status: $_safetyStatus. Navigating to EmergencyAlert...');
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const EmergencyAlert()),
+        );
       }
-    }
+    });
   }
 
   @override

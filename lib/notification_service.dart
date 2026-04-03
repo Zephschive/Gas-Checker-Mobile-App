@@ -14,6 +14,16 @@ class NotificationService {
   final FlutterLocalNotificationsPlugin _notificationsPlugin =
       FlutterLocalNotificationsPlugin();
 
+  static const _kLastGasAlertSoundMs = 'last_gas_alert_sound_ms';
+  static const _gasAlertSoundCooldownMs = 120000;
+
+  /// Call when gas is back below emergency (not 100%+ and not LEAKAGE) so the
+  /// next alert is allowed to play notification sound again.
+  Future<void> resetGasAlertSoundCooldown() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kLastGasAlertSoundMs);
+  }
+
   /// INITIALIZE NOTIFICATIONS
   ///
   /// Set [requestPermissions] to false in headless/background isolates where
@@ -40,14 +50,11 @@ class NotificationService {
     );
 
     if (requestPermissions) {
-      // Android 13+ permission
       await _notificationsPlugin
           .resolvePlatformSpecificImplementation<
               AndroidFlutterLocalNotificationsPlugin>()
           ?.requestNotificationsPermission();
 
-      // iOS: DarwinInitializationSettings.request* only applies at first install;
-      // explicit request is required for alert + sound to work reliably.
       if (Platform.isIOS || Platform.isMacOS) {
         await _notificationsPlugin
             .resolvePlatformSpecificImplementation<
@@ -85,41 +92,48 @@ class NotificationService {
     ));
   }
 
-  /// SHOW SYSTEM NOTIFICATION
+  /// Shows a gas alert. Notification always posts; if [playSound] is true, sound
+  /// only plays again after [_gasAlertSoundCooldownMs] unless
+  /// [resetGasAlertSoundCooldown] ran (readings back to safe).
   Future<void> showGasLeakAlert({
     required String title,
     required String body,
     int id = 0,
+    bool playSound = true,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final enabled = prefs.getBool('notifications_enabled') ?? true;
     if (!enabled) return;
 
-    // Dedupe when both RTDB foreground service and FCM deliver the same event.
     final now = DateTime.now().millisecondsSinceEpoch;
-    final last = prefs.getInt('last_gas_alert_ms') ?? 0;
-    if (now - last < 45000) return;
-    await prefs.setInt('last_gas_alert_ms', now);
+    var effectiveSound = playSound;
+    if (playSound) {
+      final lastSound = prefs.getInt(_kLastGasAlertSoundMs) ?? 0;
+      if (now - lastSound < _gasAlertSoundCooldownMs) {
+        effectiveSound = false;
+      } else {
+        await prefs.setInt(_kLastGasAlertSoundMs, now);
+      }
+    }
 
-    const AndroidNotificationDetails androidDetails =
+    final AndroidNotificationDetails androidDetails =
         AndroidNotificationDetails(
       'gas_alerts',
       'Gas Leak Alerts',
       channelDescription: 'Gas leak emergency alerts',
       importance: Importance.max,
       priority: Priority.high,
-      playSound: true,
-      enableVibration: true,
+      playSound: effectiveSound,
+      enableVibration: effectiveSound,
     );
 
-    const DarwinNotificationDetails iosDetails =
-        DarwinNotificationDetails(
+    final DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
-      presentSound: true,
+      presentSound: effectiveSound,
     );
 
-    const NotificationDetails details = NotificationDetails(
+    final NotificationDetails details = NotificationDetails(
       android: androidDetails,
       iOS: iosDetails,
     );

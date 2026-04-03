@@ -30,8 +30,12 @@ Future<bool> onIosBackgroundGasCheck(ServiceInstance service) async {
         final statusField = latest['Status']?.toString() ?? 'Unknown';
         if (gas2 is num) {
           final pct = (gas2.toDouble() / 2750.0).clamp(0.0, 1.0) * 100.0;
-          final dangerous =
-              pct >= 100.0 || statusField.toUpperCase() == 'LEAKAGE';
+          final u = statusField.toUpperCase();
+          final dangerous = pct >= 100.0 || u == 'LEAKAGE';
+          final notEmergency = pct < 100.0 && u != 'LEAKAGE';
+          if (notEmergency) {
+            await NotificationService().resetGasAlertSoundCooldown();
+          }
           if (dangerous) {
             final prefs = await SharedPreferences.getInstance();
             if (prefs.getBool('notifications_enabled') ?? true) {
@@ -56,6 +60,7 @@ Future<bool> onIosBackgroundGasCheck(ServiceInstance service) async {
 class BackgroundGasMonitor {
   StreamSubscription<DatabaseEvent>? _backgroundSubscription;
   Timer? _heartbeatTimer;
+  bool _wasDangerous = false;
 
   static Future<void> initialize() async {
     final service = FlutterBackgroundService();
@@ -93,13 +98,11 @@ class BackgroundGasMonitor {
     final backgroundMonitor = BackgroundGasMonitor();
     await backgroundMonitor._startMonitoring();
 
-    // Handle service control
     service.on('stopService').listen((event) {
       service.stopSelf();
       backgroundMonitor._stopMonitoring();
     });
 
-    // Heartbeat to keep service alive
     Timer.periodic(const Duration(minutes: 5), (timer) async {
       print('🔄 Background gas monitor heartbeat');
     });
@@ -116,7 +119,6 @@ class BackgroundGasMonitor {
         print('📡 Background: Received Firebase data');
 
         if (data != null && data is Map) {
-          // Get the latest entry
           final entries = data.entries.toList();
           if (entries.isNotEmpty) {
             entries.sort((a, b) => a.key.compareTo(b.key));
@@ -130,14 +132,22 @@ class BackgroundGasMonitor {
                 final gas2Value = gas2Level.toDouble();
                 final percentage = (gas2Value / 2750.0).clamp(0.0, 1.0) * 100.0;
                 final safetyStatus = statusField?.toString() ?? 'Unknown';
+                final u = safetyStatus.toUpperCase();
 
                 print('📊 Background: Gas2: $gas2Value, Percentage: ${percentage.toStringAsFixed(1)}%, Status: $safetyStatus');
 
-                // Check for dangerous conditions
-                final isDangerous = percentage >= 100.0 || safetyStatus.toUpperCase() == 'LEAKAGE';
+                final notEmergency = percentage < 100.0 && u != 'LEAKAGE';
+                if (notEmergency) {
+                  _wasDangerous = false;
+                  await NotificationService().resetGasAlertSoundCooldown();
+                }
 
+                final isDangerous = percentage >= 100.0 || u == 'LEAKAGE';
                 if (isDangerous) {
-                  await _triggerBackgroundAlert(percentage, safetyStatus);
+                  if (!_wasDangerous) {
+                    await _triggerBackgroundAlert(percentage, safetyStatus);
+                    _wasDangerous = true;
+                  }
                 }
               }
             }
@@ -156,17 +166,15 @@ class BackgroundGasMonitor {
   Future<void> _triggerBackgroundAlert(double percentage, String status) async {
     print('🚨 Background alert triggered! Percentage: $percentage, Status: $status');
 
-    // Check notification settings
     final prefs = await SharedPreferences.getInstance();
     final pushNotificationsEnabled = prefs.getBool('notifications_enabled') ?? true;
 
     if (pushNotificationsEnabled) {
       try {
-        final notificationService = NotificationService();
-        await notificationService.showGasLeakAlert(
+        await NotificationService().showGasLeakAlert(
           title: '🚨 BACKGROUND GAS ALERT!',
           body: 'Dangerous gas levels detected! Open app immediately.',
-          id: 2, // Different ID for background alerts
+          id: 2,
         );
         print('✅ Background notification sent');
       } catch (e) {

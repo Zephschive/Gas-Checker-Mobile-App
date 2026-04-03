@@ -4,10 +4,13 @@ import 'dart:io';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
-import 'pagesExt.dart';
+import '../notification_service.dart';
 
 class EmergencyAlert extends StatefulWidget {
   const EmergencyAlert({super.key});
+
+  /// True while an [EmergencyAlert] route is on the stack (prevents duplicate pushes).
+  static bool isRouteActive = false;
 
   @override
   State<EmergencyAlert> createState() => _EmergencyAlertState();
@@ -27,6 +30,7 @@ class _EmergencyAlertState extends State<EmergencyAlert> {
   @override
   void initState() {
     super.initState();
+    EmergencyAlert.isRouteActive = true;
     _audioPlayer = AudioPlayer();
     _playAlarmSound();
     _subscribeGasHistory();
@@ -55,7 +59,7 @@ class _EmergencyAlertState extends State<EmergencyAlert> {
         if (!mounted) return;
 
         if (!dangerous) {
-          _onReadingsNoLongerDangerous();
+          _onReadingsNoLongerDangerous(pct, statusField);
         } else {
           _onReadingsDangerousAgain();
         }
@@ -64,7 +68,11 @@ class _EmergencyAlertState extends State<EmergencyAlert> {
     );
   }
 
-  void _onReadingsNoLongerDangerous() {
+  void _onReadingsNoLongerDangerous(double pct, String statusField) {
+    final u = statusField.toUpperCase();
+    if (pct < 100.0 && u != 'LEAKAGE') {
+      unawaited(NotificationService().resetGasAlertSoundCooldown());
+    }
     if (_readingsSafe) return;
     unawaited(_stopPlaybackOnly());
     if (!mounted) return;
@@ -94,6 +102,7 @@ class _EmergencyAlertState extends State<EmergencyAlert> {
 
   @override
   void dispose() {
+    EmergencyAlert.isRouteActive = false;
     _gasSub?.cancel();
     unawaited(_releasePlayer());
     super.dispose();
@@ -147,9 +156,9 @@ class _EmergencyAlertState extends State<EmergencyAlert> {
     if (!mounted) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (context) => const MainScreen()),
-      );
+      // Pop only — do not pushReplacement(MainScreen): that stacks a second MainScreen
+      // and Firebase listeners, which re-opens EmergencyAlert and doubles alarm audio.
+      Navigator.of(context).pop();
     });
   }
 
@@ -306,36 +315,38 @@ class _EmergencyAlertState extends State<EmergencyAlert> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 30),
-                SizedBox(
-                  width: double.infinity,
-                  height: 60,
-                  child: ElevatedButton(
-                    onPressed: () {},
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFF5F5DC),
-                      foregroundColor: const Color(0xFFE53935),
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
+                if (!_readingsSafe) ...[
+                  const SizedBox(height: 30),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 60,
+                    child: ElevatedButton(
+                      onPressed: () {},
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFF5F5DC),
+                        foregroundColor: const Color(0xFFE53935),
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.phone, size: 24),
+                          SizedBox(width: 12),
+                          Text(
+                            'Call Emergency Services',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    child: const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.phone, size: 24),
-                        SizedBox(width: 12),
-                        Text(
-                          'Call Emergency Services',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
                   ),
-                ),
+                ],
                 const SizedBox(height: 20),
               ],
             ),
