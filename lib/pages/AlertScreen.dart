@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:audioplayers/audioplayers.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
 import 'pagesExt.dart';
 
@@ -12,28 +14,94 @@ class EmergencyAlert extends StatefulWidget {
 }
 
 class _EmergencyAlertState extends State<EmergencyAlert> {
-  late AudioPlayer _audioPlayer;
+  late final AudioPlayer _audioPlayer;
+  StreamSubscription<DatabaseEvent>? _gasSub;
+
   bool _isPlaying = false;
+  bool _playerReleased = false;
+  /// Latest snapshot says concentration / status are no longer in emergency range.
+  bool _readingsSafe = false;
+  /// User turned alarm off manually — do not auto-restart if danger returns.
+  bool _userSilencedAlarm = false;
 
   @override
   void initState() {
     super.initState();
     _audioPlayer = AudioPlayer();
     _playAlarmSound();
+    _subscribeGasHistory();
+  }
+
+  void _subscribeGasHistory() {
+    _gasSub = FirebaseDatabase.instance.ref('GasHistory').onValue.listen(
+      (event) {
+        final data = event.snapshot.value;
+        if (data == null || data is! Map) return;
+
+        final entries = data.entries.toList();
+        if (entries.isEmpty) return;
+        entries.sort((a, b) => a.key.compareTo(b.key));
+        final latest = entries.last.value;
+        if (latest is! Map) return;
+
+        final gas2 = latest['Gas2'];
+        final statusField = latest['Status']?.toString() ?? 'Unknown';
+        if (gas2 is! num) return;
+
+        final pct = (gas2.toDouble() / 2750.0).clamp(0.0, 1.0) * 100.0;
+        final dangerous =
+            pct >= 100.0 || statusField.toUpperCase() == 'LEAKAGE';
+
+        if (!mounted) return;
+
+        if (!dangerous) {
+          _onReadingsNoLongerDangerous();
+        } else {
+          _onReadingsDangerousAgain();
+        }
+      },
+      onError: (_) {},
+    );
+  }
+
+  void _onReadingsNoLongerDangerous() {
+    if (_readingsSafe) return;
+    unawaited(_stopPlaybackOnly());
+    if (!mounted) return;
+    setState(() {
+      _readingsSafe = true;
+      _isPlaying = false;
+    });
+  }
+
+  void _onReadingsDangerousAgain() {
+    if (_userSilencedAlarm || _playerReleased || !mounted) return;
+    if (!_readingsSafe) return;
+    setState(() => _readingsSafe = false);
+    _playAlarmSound();
+  }
+
+  Future<void> _releasePlayer() async {
+    if (_playerReleased) return;
+    _playerReleased = true;
+    try {
+      await _audioPlayer.stop();
+    } catch (_) {}
+    try {
+      await _audioPlayer.dispose();
+    } catch (_) {}
   }
 
   @override
   void dispose() {
-    _stopAlarmSound();
-    _audioPlayer.dispose();
+    _gasSub?.cancel();
+    unawaited(_releasePlayer());
     super.dispose();
   }
 
   Future<void> _playAlarmSound() async {
+    if (_playerReleased || !mounted || _readingsSafe) return;
     try {
-      // iOS needs an explicit playback session; default ambient-style behavior
-      // can mute alarm audio when the silent switch is used or the session
-      // never activates.
       if (Platform.isIOS || Platform.isMacOS) {
         await _audioPlayer.setAudioContext(
           AudioContext(
@@ -56,223 +124,221 @@ class _EmergencyAlertState extends State<EmergencyAlert> {
           ),
         );
       }
-      await _audioPlayer.setReleaseMode(ReleaseMode.loop); // Loop the alarm
-      await _audioPlayer.setVolume(1.0); // Full volume
-      await _audioPlayer.play(AssetSource('sounds/alarm.wav'));
-      setState(() {
-        _isPlaying = true;
-      });
-      print('🚨 Alarm sound started playing');
-    } catch (e) {
-      print('❌ Error playing alarm sound: $e');
-      // Fallback: try to play a system sound or beep if available
-      _playSystemSound();
-    }
-  }
-
-  Future<void> _playSystemSound() async {
-    try {
-      // This is a fallback for devices that might support system sounds
-      // On Android, this might play a notification sound
       await _audioPlayer.setReleaseMode(ReleaseMode.loop);
-      await _audioPlayer.setVolume(0.8);
-      // You might need to adjust this based on device capabilities
-      print('🔊 Attempting to play system notification sound');
-    } catch (e) {
-      print('❌ System sound not available: $e');
-    }
-  }
-
-  Future<void> _stopAlarmSound() async {
-    try {
-      await _audioPlayer.stop();
-      setState(() {
-        _isPlaying = false;
-      });
-      print('🔇 Alarm sound stopped');
-    } catch (e) {
-      print('❌ Error stopping alarm sound: $e');
-    }
-  }
-
-  Future<void> _stopAlarmSoundWithoutState() async {
-    try {
-      await _audioPlayer.stop();
-      print('🔇 Alarm sound stopped');
-    } catch (e) {
-      print('❌ Error stopping alarm sound: $e');
-    }
-  }
-
-  void _navigateToHome() {
-    // Use addPostFrameCallback to ensure navigation happens after the frame is complete
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+      await _audioPlayer.setVolume(1.0);
+      await _audioPlayer.play(AssetSource('sounds/alarm.wav'));
       if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => const MainScreen()),
-        );
+        setState(() => _isPlaying = true);
       }
+    } catch (e) {
+      debugPrint('Alarm sound error: $e');
+    }
+  }
+
+  Future<void> _stopPlaybackOnly() async {
+    if (_playerReleased || !mounted) return;
+    try {
+      await _audioPlayer.stop();
+    } catch (_) {}
+  }
+
+  Future<void> _leaveScreen() async {
+    await _releasePlayer();
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (context) => const MainScreen()),
+      );
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF1A1A1A),
-      appBar: AppBar(
+    return PopScope(
+      canPop: true,
+      onPopInvokedWithResult: (bool didPop, Object? result) {
+        if (didPop) {
+          unawaited(_releasePlayer());
+        }
+      },
+      child: Scaffold(
         backgroundColor: const Color(0xFF1A1A1A),
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white, size: 28),
-          onPressed: () async {
-            await _stopAlarmSoundWithoutState();
-            _navigateToHome();
-          },
-        ),
-        title: const Text(
-          'EMERGENCY',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 2,
+        appBar: AppBar(
+          backgroundColor: const Color(0xFF1A1A1A),
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back, color: Colors.white, size: 28),
+            onPressed: _leaveScreen,
           ),
-        ),
-        centerTitle: true,
-        actions: [
-          IconButton(
-            icon: Icon(_isPlaying ? Icons.volume_up : Icons.volume_off, color: Colors.white, size: 32),
-            onPressed: () async {
-              if (_isPlaying) {
-                await _stopAlarmSound();
-              } else {
-                await _playAlarmSound();
-              }
-            },
+          title: Text(
+            _readingsSafe ? 'STATUS UPDATE' : 'EMERGENCY',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 2,
+            ),
           ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            children: [
-              const SizedBox(height: 20),
-
-              // Main danger message
-              const Text(
-                'DANGER: Gas Leak\nDetected',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 32,
-                  fontWeight: FontWeight.bold,
-                  height: 1.2,
-                ),
+          centerTitle: true,
+          actions: [
+            IconButton(
+              icon: Icon(
+                _isPlaying ? Icons.volume_up : Icons.volume_off,
+                color: Colors.white,
+                size: 32,
               ),
-
-              const SizedBox(height: 12),
-
-              // Warning subtitle
-              Text(
-                'Act Immediately! Your safety is at risk.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.8),
-                  fontSize: 16,
-                ),
-              ),
-
-              const SizedBox(height: 30),
-
-              // Safety instructions card
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF2D4A43),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Safety Instructions',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-
-                    _buildInstruction(
-                      icon: Icons.power_settings_new,
-                      text: 'Do NOT use electronics or light switches.',
-                    ),
-                    const SizedBox(height: 16),
-
-                    _buildInstruction(
-                      icon: Icons.local_fire_department,
-                      text: 'Extinguish all open flames immediately.',
-                    ),
-                    const SizedBox(height: 16),
-
-                    _buildInstruction(
-                      icon: Icons.window,
-                      text: 'Open all windows and doors for ventilation.',
-                    ),
-                    const SizedBox(height: 16),
-
-                    _buildInstruction(
-                      icon: Icons.directions_run,
-                      text: 'Evacuate the premises immediately.',
-                    ),
-                    const SizedBox(height: 16),
-
-                    _buildInstruction(
-                      icon: Icons.gas_meter,
-                      text: 'Turn off the gas supply IF safe to do so.',
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 30),
-
-              // Call emergency button
-              SizedBox(
-                width: double.infinity,
-                height: 60,
-                child: ElevatedButton(
-                  onPressed: () {},
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFF5F5DC),
-                    foregroundColor: const Color(0xFFE53935),
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
+              onPressed: () async {
+                if (_playerReleased) return;
+                if (_isPlaying) {
+                  await _stopPlaybackOnly();
+                  if (mounted) {
+                    setState(() {
+                      _isPlaying = false;
+                      _userSilencedAlarm = true;
+                    });
+                  }
+                } else {
+                  _userSilencedAlarm = false;
+                  if (!_readingsSafe) {
+                    await _playAlarmSound();
+                  }
+                }
+              },
+            ),
+          ],
+        ),
+        body: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              children: [
+                const SizedBox(height: 20),
+                Text(
+                  _readingsSafe
+                      ? 'Readings back in\nsafe range'
+                      : 'DANGER: Gas Leak\nDetected',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: _readingsSafe
+                        ? const Color(0xFF81C784)
+                        : Colors.white,
+                    fontSize: 32,
+                    fontWeight: FontWeight.bold,
+                    height: 1.2,
                   ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  _readingsSafe
+                      ? 'The alarm has been silenced. You can return to the dashboard when ready.'
+                      : 'Act Immediately! Your safety is at risk.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.8),
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 30),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: _readingsSafe
+                        ? const Color(0xFF1B3D2F)
+                        : const Color(0xFF2D4A43),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(Icons.phone, size: 24),
-                      SizedBox(width: 12),
                       Text(
-                        'Call Emergency Services',
-                        style: TextStyle(
-                          fontSize: 18,
+                        _readingsSafe ? 'Next steps' : 'Safety Instructions',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
+                      const SizedBox(height: 20),
+                      if (_readingsSafe) ...[
+                        _buildInstruction(
+                          icon: Icons.info_outline,
+                          text:
+                              'Stay alert until you are sure the area is fully safe.',
+                        ),
+                        const SizedBox(height: 16),
+                        _buildInstruction(
+                          icon: Icons.home,
+                          text:
+                              'Use the back button to return to the home dashboard.',
+                        ),
+                      ] else ...[
+                        _buildInstruction(
+                          icon: Icons.power_settings_new,
+                          text:
+                              'Do NOT use electronics or light switches.',
+                        ),
+                        const SizedBox(height: 16),
+                        _buildInstruction(
+                          icon: Icons.local_fire_department,
+                          text:
+                              'Extinguish all open flames immediately.',
+                        ),
+                        const SizedBox(height: 16),
+                        _buildInstruction(
+                          icon: Icons.window,
+                          text:
+                              'Open all windows and doors for ventilation.',
+                        ),
+                        const SizedBox(height: 16),
+                        _buildInstruction(
+                          icon: Icons.directions_run,
+                          text: 'Evacuate the premises immediately.',
+                        ),
+                        const SizedBox(height: 16),
+                        _buildInstruction(
+                          icon: Icons.gas_meter,
+                          text:
+                              'Turn off the gas supply IF safe to do so.',
+                        ),
+                      ],
                     ],
                   ),
                 ),
-              ),
-
-              const SizedBox(height: 20),
-            ],
+                const SizedBox(height: 30),
+                SizedBox(
+                  width: double.infinity,
+                  height: 60,
+                  child: ElevatedButton(
+                    onPressed: () {},
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFF5F5DC),
+                      foregroundColor: const Color(0xFFE53935),
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.phone, size: 24),
+                        SizedBox(width: 12),
+                        Text(
+                          'Call Emergency Services',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+              ],
+            ),
           ),
         ),
       ),
