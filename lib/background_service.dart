@@ -1,13 +1,59 @@
 import 'dart:async';
 import 'dart:ui';
+
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
-import 'package:firebase_database/firebase_database.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'firebase_options.dart';
 import 'notification_service.dart';
 
+/// iOS background fetch entry (15–30s max). Real-time monitoring is not
+/// possible on iOS like Android; this performs a single snapshot check.
+@pragma('vm:entry-point')
+Future<bool> onIosBackgroundGasCheck(ServiceInstance service) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  DartPluginRegistrant.ensureInitialized();
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    final snap =
+        await FirebaseDatabase.instance.ref('GasHistory').orderByKey().limitToLast(1).get();
+    final val = snap.value;
+    if (val is Map && val.isNotEmpty) {
+      final latest = val.values.last;
+      if (latest is Map) {
+        final gas2 = latest['Gas2'];
+        final statusField = latest['Status']?.toString() ?? 'Unknown';
+        if (gas2 is num) {
+          final pct = (gas2.toDouble() / 2750.0).clamp(0.0, 1.0) * 100.0;
+          final dangerous =
+              pct >= 100.0 || statusField.toUpperCase() == 'LEAKAGE';
+          if (dangerous) {
+            final prefs = await SharedPreferences.getInstance();
+            if (prefs.getBool('notifications_enabled') ?? true) {
+              final notifications = NotificationService();
+              await notifications.initialize(requestPermissions: false);
+              await notifications.showGasLeakAlert(
+                title: '🚨 GAS LEAK ALERT!',
+                body: 'Dangerous gas levels detected! Open app immediately.',
+                id: 3,
+              );
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {
+    print('onIosBackgroundGasCheck: $e');
+  }
+  return true;
+}
+
 class BackgroundGasMonitor {
-  static const String _serviceId = 'gas_monitor_service';
   StreamSubscription<DatabaseEvent>? _backgroundSubscription;
   Timer? _heartbeatTimer;
 
@@ -18,13 +64,17 @@ class BackgroundGasMonitor {
       androidConfiguration: AndroidConfiguration(
         onStart: _onStart,
         autoStart: true,
-        isForegroundMode: false, // Disable foreground mode temporarily
+        isForegroundMode: true,
         notificationChannelId: 'gas_leak_channel',
         initialNotificationTitle: 'Gas Monitor',
         initialNotificationContent: 'Active monitoring',
         foregroundServiceNotificationId: 888,
       ),
-      iosConfiguration: IosConfiguration(),
+      iosConfiguration: IosConfiguration(
+        autoStart: true,
+        onForeground: _onStart,
+        onBackground: onIosBackgroundGasCheck,
+      ),
     );
 
     await service.startService();
@@ -34,8 +84,11 @@ class BackgroundGasMonitor {
   static void _onStart(ServiceInstance service) async {
     DartPluginRegistrant.ensureInitialized();
 
-    // Initialize Firebase for background
-    // Note: Firebase initialization should be done in main.dart
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+
+    await NotificationService().initialize(requestPermissions: false);
 
     final backgroundMonitor = BackgroundGasMonitor();
     await backgroundMonitor._startMonitoring();

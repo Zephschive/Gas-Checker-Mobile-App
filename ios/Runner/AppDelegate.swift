@@ -1,6 +1,7 @@
 import UIKit
 import Flutter
 import UserNotifications
+import flutter_background_service_ios
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
@@ -9,6 +10,8 @@ import UserNotifications
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+
+    SwiftFlutterBackgroundServicePlugin.taskIdentifier = "dev.flutter.background.refresh"
 
     // 🔔 Allow notifications while app is in foreground
     UNUserNotificationCenter.current().delegate = self

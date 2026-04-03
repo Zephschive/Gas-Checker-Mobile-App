@@ -1,5 +1,7 @@
-import 'package:flutter/material.dart';
+import 'dart:io';
+
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/material.dart';
 import 'pagesExt.dart';
 
 class EmergencyAlert extends StatefulWidget {
@@ -29,7 +31,31 @@ class _EmergencyAlertState extends State<EmergencyAlert> {
 
   Future<void> _playAlarmSound() async {
     try {
-      // Try to play alarm sound from assets
+      // iOS needs an explicit playback session; default ambient-style behavior
+      // can mute alarm audio when the silent switch is used or the session
+      // never activates.
+      if (Platform.isIOS || Platform.isMacOS) {
+        await _audioPlayer.setAudioContext(
+          AudioContext(
+            iOS: AudioContextIOS(
+              category: AVAudioSessionCategory.playback,
+              options: const {AVAudioSessionOptions.mixWithOthers},
+            ),
+          ),
+        );
+      } else if (Platform.isAndroid) {
+        await _audioPlayer.setAudioContext(
+          AudioContext(
+            android: const AudioContextAndroid(
+              isSpeakerphoneOn: true,
+              stayAwake: true,
+              contentType: AndroidContentType.sonification,
+              usageType: AndroidUsageType.alarm,
+              audioFocus: AndroidAudioFocus.gainTransientMayDuck,
+            ),
+          ),
+        );
+      }
       await _audioPlayer.setReleaseMode(ReleaseMode.loop); // Loop the alarm
       await _audioPlayer.setVolume(1.0); // Full volume
       await _audioPlayer.play(AssetSource('sounds/alarm.wav'));

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,7 +15,10 @@ class NotificationService {
       FlutterLocalNotificationsPlugin();
 
   /// INITIALIZE NOTIFICATIONS
-  Future<void> initialize() async {
+  ///
+  /// Set [requestPermissions] to false in headless/background isolates where
+  /// dialogs are not allowed and permissions were already granted in [main].
+  Future<void> initialize({bool requestPermissions = true}) async {
     const AndroidInitializationSettings androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
 
@@ -34,11 +39,50 @@ class NotificationService {
       onDidReceiveNotificationResponse: _onNotificationTapped,
     );
 
-    // Android 13+ permission
-    await _notificationsPlugin
+    if (requestPermissions) {
+      // Android 13+ permission
+      await _notificationsPlugin
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>()
+          ?.requestNotificationsPermission();
+
+      // iOS: DarwinInitializationSettings.request* only applies at first install;
+      // explicit request is required for alert + sound to work reliably.
+      if (Platform.isIOS || Platform.isMacOS) {
+        await _notificationsPlugin
+            .resolvePlatformSpecificImplementation<
+                IOSFlutterLocalNotificationsPlugin>()
+            ?.requestPermissions(alert: true, badge: true, sound: true);
+      }
+    }
+
+    if (Platform.isAndroid) {
+      await ensureAndroidNotificationChannels();
+    }
+  }
+
+  /// Creates channels before FCM / foreground service use them.
+  Future<void> ensureAndroidNotificationChannels() async {
+    if (!Platform.isAndroid) return;
+
+    final android = _notificationsPlugin
         .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
-        ?.requestNotificationsPermission();
+            AndroidFlutterLocalNotificationsPlugin>();
+    if (android == null) return;
+
+    await android.createNotificationChannel(const AndroidNotificationChannel(
+      'gas_alerts',
+      'Gas Leak Alerts',
+      description: 'Gas leak emergency alerts',
+      importance: Importance.max,
+    ));
+
+    await android.createNotificationChannel(const AndroidNotificationChannel(
+      'gas_leak_channel',
+      'Gas monitor service',
+      description: 'Keeps live monitoring active in the background',
+      importance: Importance.low,
+    ));
   }
 
   /// SHOW SYSTEM NOTIFICATION
@@ -50,6 +94,12 @@ class NotificationService {
     final prefs = await SharedPreferences.getInstance();
     final enabled = prefs.getBool('notifications_enabled') ?? true;
     if (!enabled) return;
+
+    // Dedupe when both RTDB foreground service and FCM deliver the same event.
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final last = prefs.getInt('last_gas_alert_ms') ?? 0;
+    if (now - last < 45000) return;
+    await prefs.setInt('last_gas_alert_ms', now);
 
     const AndroidNotificationDetails androidDetails =
         AndroidNotificationDetails(
